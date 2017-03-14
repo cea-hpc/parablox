@@ -5,11 +5,13 @@
 Test the ProcessBlock abstract class
 """
 
+from multiprocessing import Event
+from multiprocessing.queues import Queue
+from threading import Thread
 from unittest import TestCase
 from unittest.mock import Mock
 
-from multiprocessing.queues import Queue
-from parablox import ProcessBlock
+from parablox import ProcessingError, ProcessBlock
 
 
 class DummyProcessBlock(ProcessBlock):
@@ -36,6 +38,27 @@ class ZombieBlock(ProcessBlock):
 
     def is_alive(self):
         return True
+
+
+class FailingProcessBlock(ProcessBlock):
+    """
+    Fails every job once before processing them successfully
+    """
+
+    def __init__(self, failed_event=None, failure_msg="test", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._fail = False
+        self._failure_msg = failure_msg
+        self._failed_event = failed_event
+
+    def process_job(self, job):
+        if not self._fail:
+            self._fail = True
+            raise ProcessingError(self._failure_msg)
+        if self._failed_event is not None:
+            self._failed_event.set()
+        self._fail = False
+        return job
 
 
 class TestProcessBlock(TestCase):
@@ -95,3 +118,30 @@ class TestProcessBlock(TestCase):
 
         child.join(timeout=1)
         self.assertFalse(child.is_alive())
+
+    def test_warning_on_job_failure(self):
+        """
+        Log JopProcessingException as warnings
+        """
+        parent = DummyProcessBlock()
+        job_failed = Event()
+        child = FailingProcessBlock(failed_event=job_failed, parent=parent)
+
+        # Logging + multiprocessing cannot be easily tested -> use a thread
+        child_thr = Thread(target=child.run)
+        with self.assertLogs(level='WARNING') as context_manager:
+            child_thr.start()
+            parent.jobs.put(True)
+            # Wait for the job to actually fail
+            self.assertTrue(job_failed.wait(timeout=1))
+
+        # Stop child_thr
+        parent.jobs.put(None)
+
+        # Meanwhile: only one message was logged and it says "test"
+        self.assertEqual(context_manager.records.pop().getMessage().strip(),
+                         "test")
+
+        # Join child_thr
+        child_thr.join(timeout=1)
+        self.assertFalse(child_thr.is_alive())

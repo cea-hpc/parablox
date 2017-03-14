@@ -17,6 +17,7 @@ Exception to be raised on error in ProcessBlock.proc
 """
 
 from abc import ABC, abstractmethod
+from logging import getLogger
 from multiprocessing import Event, Process, Queue
 
 
@@ -56,6 +57,9 @@ class ProcessBlock(Process, ABC):
         # The job queue
         self.jobs = Queue(queue_size)
 
+        # Logging facility
+        self.logger = getLogger(self.name)
+
     def start(self):
         super().__init__(name=self.name)
         super().start()
@@ -71,12 +75,13 @@ class ProcessBlock(Process, ABC):
         """
         Process any event that has occured
         """
-        pass
+        self.logger.debug("process events...")
 
     def get_job(self):
         """
         Get a job from the parent block
         """
+        self.logger.debug("get a job to process...")
         return self.parent.jobs.get()
 
     def run(self):
@@ -85,6 +90,7 @@ class ProcessBlock(Process, ABC):
         """
         # Launch child blocks
         # Children are started here in order to build a gracefull process tree
+        self.logger.debug("start %d child processes", len(self.children))
         for child in self.children:
             child.start()
 
@@ -98,17 +104,21 @@ class ProcessBlock(Process, ABC):
                 if job is None:
                     job = self.get_job()
                     if job is None:
+                        self.logger.debug("received the 'end job'")
                         self.stop.set()
                         continue
 
                 # Process the job
+                self.logger.debug("process a job...")
                 try:
                     job = self.process_job(job)
-                except ProcessingError:
+                except ProcessingError as exc:
+                    self.logger.warning(exc)
                     continue
 
                 # The block is batching jobs or filtering them
                 if job is None:
+                    self.logger.debug("no job to pass on")
                     continue
 
                 # job is set to None when the next line completes
@@ -117,6 +127,9 @@ class ProcessBlock(Process, ABC):
                 continue
 
         for child in self.children:
+            self.logger.debug("sending the 'end' job to a child process...")
             self.jobs.put(None)
         for child in self.children:
+            self.logger.debug("waiting for a child process...")
             child.join()
+        self.logger.debug("terminating")
