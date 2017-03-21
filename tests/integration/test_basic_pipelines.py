@@ -1,5 +1,6 @@
 # author: Quentin Bouget <quentin.bouget@cea.fr>
 #
+# pylint: disable=protected-access
 
 """
 Test a basic parablox pipeline
@@ -59,11 +60,13 @@ class WaitingBlock(DummyProcessBlock):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.consume = Event()
+        self.waiting = Event()
 
     def get_job(self):
         """
         Wait for the consume event and return a job
         """
+        self.waiting.set()
         self.consume.wait()
         self.consume.clear()
         return super().get_job()
@@ -121,6 +124,98 @@ class TestPipelines(TestCase):
         for block in blocks:
             block.consume.set()
             self.assertIsNone(block.jobs.get(timeout=1))
+
+        job_factory.join(timeout=1)
+        self.assertFalse(job_factory.is_alive())
+
+    def test_cancel_jobs(self):
+        """
+        Upon setting the cancel event, jobs are re-processed
+
+        JobFactory --> WaitingBlock --> DummyProcessBlock (--> zombie)
+        """
+        # This factory only produces the "end job"
+        job_factory = JobFactory(tuple())
+        waiting_block = WaitingBlock(parent=job_factory)
+        block = DummyProcessBlock(parent=waiting_block)
+        ZombieBlock(parent=block).die.set()
+
+        job_factory.start()
+
+        # Manually add jobs to block's queue
+        for job in range(10):
+            block.jobs.put(job)
+
+        # Wait for waiting_block to block
+        self.assertTrue(waiting_block.waiting.wait(timeout=1))
+        waiting_block.waiting.clear()
+        # Cancel waiting_block
+        waiting_block.events["cancel"].set()
+        waiting_block.event.set()
+
+        # Let waiting_block process the cancel event
+        waiting_block.consume.set()
+
+        # block should receive a requeue event and requeue its jobs
+        block.jobs.join()
+
+        for _ in range(11): # 10 + "end job"
+            self.assertTrue(waiting_block.waiting.wait(timeout=1))
+            waiting_block.waiting.clear()
+            waiting_block.consume.set()
+
+        # Jobs get reprocessed
+        self.assertCountEqual(range(10), iter(block.jobs.get(timeout=1)
+                                              for _ in range(10)))
+
+        job_factory.join(timeout=1)
+        self.assertFalse(job_factory.is_alive())
+
+    def test_dynamic_requeue(self):
+        """
+        Upon setting the requeue event jobs are sent back to parents
+
+        JobFactory --> WaitingBlock --> DummyProcessBlock (--> zombie)
+        """
+        job_factory = JobFactory(tuple())
+        waiting_block = WaitingBlock(parent=job_factory)
+        block = DummyProcessBlock(parent=waiting_block)
+        ZombieBlock(parent=block).die.set()
+
+        job_factory.start()
+
+        # Manually add jobs to block's queue
+        for job in range(10):
+            block.jobs.put(job)
+
+        # Wait for waiting_block to block
+        self.assertTrue(waiting_block.waiting.wait(timeout=1))
+        waiting_block.waiting.clear()
+        # Requeue from waiting_block
+        waiting_block.events["requeue"].set()
+        waiting_block.event.set()
+
+        # Let waiting_block process the requeue event
+        waiting_block.consume.set()
+
+        # block should receive a requeue event and requeue its jobs
+        block.jobs.join()
+
+        requeued_jobs = []
+        for _ in range(10):
+            requeued_jobs.append(job_factory.jobs.get(timeout=1))
+            job_factory.jobs.task_done()
+
+        self.assertCountEqual(range(10), requeued_jobs)
+
+        # Wait until the event is entirely processed
+        self.assertTrue(waiting_block.waiting.wait(timeout=1))
+        waiting_block.waiting.clear()
+
+        # Publish "end job" manually
+        job_factory.jobs.put(None)
+
+        waiting_block.consume.set()
 
         job_factory.join(timeout=1)
         self.assertFalse(job_factory.is_alive())
