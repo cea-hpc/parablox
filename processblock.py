@@ -34,7 +34,7 @@ class EventInterrupt(Exception):
 
 class ProcessingError(RuntimeError):
     """
-    To be raised when ProcessBlock's process_job() method fails
+    To be raised when ProcessBlock's process_obj() method fails
     """
     pass
 
@@ -114,60 +114,60 @@ class ProcessBlock(Process, ABC):
         # Link family with self
         self.family.link(self)
 
-        # The job queue
-        self.jobs = JoinableQueue(queue_size)
-        # List of jobs that were canceled and need re-processing
-        self._canceled_jobs = deque()
+        # The object queue
+        self.objs = JoinableQueue(queue_size)
+        # List of objects that were canceled and need re-processing
+        self._canceled_objs = deque()
 
         # Logging facility
         self.logger = getLogger(self.name)
 
-        # Job currently processed
-        self._job = None
+        # Object currently processed
+        self._obj = None
 
     def start(self):
         super().__init__(name=self.name)
         super().start()
 
     @abstractmethod
-    def process_job(self, job):
+    def process_obj(self, obj):
         """
-        The actual work a block wants to perform on a job
+        The actual work a block wants to perform on a object
         """
         raise NotImplementedError()
 
     def stop_handler(self):
         """
-        Send the "end job" (None) to every child
+        Send the "end object" (None) to every child
         """
-        self.logger.debug("sending the 'end job' to child processes...")
+        self.logger.debug("sending the 'end object' to child processes...")
         for _ in self.family.alive_children():
-            self.jobs.put(None)
+            self.objs.put(None)
 
     def cancel_handler(self):
         """
-        Cancel children's jobs and re-queue them in self._canceled_jobs
+        Cancel children's objects and re-queue them in self._canceled_objs
         """
-        self.logger.debug("ask children to requeue their jobs")
+        self.logger.debug("ask children to requeue their objects")
         for child in self.family.alive_children():
             child.events["requeue"].set()
             child.event.set()
 
-        self.logger.debug("fetching canceled jobs...")
-        while (self.jobs.qsize() != 0 or
+        self.logger.debug("fetching canceled objects...")
+        while (self.objs.qsize() != 0 or
                any(child.events["requeue"].is_set()
                    for child in self.family.alive_children())):
             try:
-                job = self.jobs.get_nowait()
-                self.jobs.task_done()
+                obj = self.objs.get_nowait()
+                self.objs.task_done()
             except Empty:
                 continue
-            if job is not None:
-                self._canceled_jobs.append(job)
+            if obj is not None:
+                self._canceled_objs.append(obj)
 
-        # To be able to stop without the parent block sending an 'end job'
+        # To be able to stop without the parent block sending an 'end object'
         if self.events["stop"].is_set():
-            self._canceled_jobs.append(None)
+            self._canceled_objs.append(None)
             self.events["stop"].clear()
 
         # Clear the event
@@ -175,37 +175,37 @@ class ProcessBlock(Process, ABC):
 
     def requeue_handler(self):
         """
-        Requeue every job managed by the block or one of its children
+        Requeue every object managed by the block or one of its children
         """
         for child in self.family.alive_children():
             child.events["requeue"].set()
             child.event.set()
 
-        self.logger.debug("requeueing jobs...")
-        if self._job is not None:
-            self.family.parent.jobs.put(self._job)
-            self._job = None
+        self.logger.debug("requeueing objects...")
+        if self._obj is not None:
+            self.family.parent.objs.put(self._obj)
+            self._obj = None
 
-        while (self.jobs.qsize() != 0 or
+        while (self.objs.qsize() != 0 or
                any(child.events["requeue"].is_set()
                    for child in self.family.alive_children())):
             try:
-                job = self.jobs.get_nowait()
-                self.jobs.task_done()
+                obj = self.objs.get_nowait()
+                self.objs.task_done()
             except Empty:
                 # Do not waste that time
-                if self._canceled_jobs:
-                    job = self._canceled_jobs.popleft()
+                if self._canceled_objs:
+                    obj = self._canceled_objs.popleft()
                 else:
                     continue
-            if job is not None:
-                self.family.parent.jobs.put(job)
+            if obj is not None:
+                self.family.parent.objs.put(obj)
 
-        for job in filter(lambda x: x is not None, self._canceled_jobs):
-            self.family.parent.jobs.put(job)
+        for obj in filter(lambda x: x is not None, self._canceled_objs):
+            self.family.parent.objs.put(obj)
 
-        self.logger.debug("wait for parent to fetch all the jobs...")
-        self.family.parent.jobs.join()
+        self.logger.debug("wait for parent to fetch all the objects...")
+        self.family.parent.objs.join()
 
         # Processblock was potentially stopped
         self.events["stop"].clear()
@@ -238,30 +238,30 @@ class ProcessBlock(Process, ABC):
 
         return event_processed
 
-    def get_job(self):
+    def get_obj(self):
         """
-        Get a job from the parent block
+        Get an object from the parent block
         """
-        self.logger.debug("get a job to process...")
+        self.logger.debug("get an object to process...")
         try:
-            return self._canceled_jobs.popleft()
+            return self._canceled_objs.popleft()
         except IndexError:
-            job = self.family.parent.jobs.get(timeout=self._poll_interval)
-            self.family.parent.jobs.task_done()
-            return job
+            obj = self.family.parent.objs.get(timeout=self._poll_interval)
+            self.family.parent.objs.task_done()
+            return obj
 
-    def publish_job(self, job):
+    def publish_obj(self, obj):
         """
-        Publish `job` to child blocks
+        Publish `obj` to child blocks
         """
-        if job is None:
-            # The block is batching jobs or filtering them
-            self.logger.debug("no job to pass on")
+        if obj is None:
+            # The block is batching objs or filtering them
+            self.logger.debug("no obj to pass on")
             return
 
-        self.logger.debug("publish '%s'", job)
+        self.logger.debug("publish '%s'", obj)
         if self.family.children:
-            self.jobs.put(job, timeout=self._poll_interval)
+            self.objs.put(obj, timeout=self._poll_interval)
 
     def cleanup(self):
         """
@@ -277,7 +277,7 @@ class ProcessBlock(Process, ABC):
 
     def run(self):
         """
-        Launch child blocks and process jobs
+        Launch child blocks and process objects
         """
         # Launch child blocks
         # Children are started here in order to build a gracefull process tree
@@ -292,25 +292,25 @@ class ProcessBlock(Process, ABC):
                 if self.process_events():
                     continue
 
-                # Find a job
-                if self._job is None:
+                # Find an object to process
+                if self._obj is None:
                     try:
-                        self._job = self.get_job()
+                        self._obj = self.get_obj()
                     except Empty:
                         continue
 
-                    if self._job is None:
-                        self.logger.debug("received the 'end job'")
+                    if self._obj is None:
+                        self.logger.debug("received the 'end object'")
                         self.events["stop"].set()
                         self.event.set()
                         continue
 
-                job = self._job
+                obj = self._obj
 
-                # Process the job
-                self.logger.debug("process a job...")
+                # Process the object
+                self.logger.debug("process '%s'", obj)
                 try:
-                    job = self.process_job(job)
+                    obj = self.process_obj(obj)
                 except ProcessingError as exc:
                     self.logger.warning(exc)
                     continue
@@ -318,14 +318,14 @@ class ProcessBlock(Process, ABC):
                     # An event ocrrured, process it
                     continue
 
-                # Publish the processed job, check for events periodically
+                # Publish the processed object, check for events periodically
                 while not self.event.is_set():
                     try:
-                        self.publish_job(job)
+                        self.publish_obj(obj)
                     except Full:
                         continue
-                    # Job was published or did not to be
-                    self._job = None
+                    # Object was published, or did not to be
+                    self._obj = None
                     break
 
             # Process the stop event (which is ignored in the loop underneath)

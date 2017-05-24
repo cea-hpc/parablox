@@ -21,17 +21,17 @@ from parablox.processblock import BlockFamily
 
 class DummyProcessBlock(ProcessBlock):
     """
-    Dummy ProcessBlock subclass, just passes on its jobs
+    Dummy ProcessBlock subclass, just passes on its objects
     """
 
-    def process_job(self, job):
-        return job
+    def process_obj(self, obj):
+        return obj
 
 class ZombieBlock(ProcessBlock):
     """
     Dummy ProcessBlock subclass
 
-    Zombie are used to force blocks to store jobs in their queue
+    Zombie are used to force blocks to store objects in their queue
     """
 
     def __init__(self, *args, **kwargs):
@@ -40,7 +40,7 @@ class ZombieBlock(ProcessBlock):
         # Use an event to interact from another process's context
         self.die = Event()
 
-    def process_job(self, job):
+    def process_obj(self, obj):
         raise RuntimeError("This method sould not be called")
 
     def is_alive(self):
@@ -49,15 +49,15 @@ class ZombieBlock(ProcessBlock):
 
 class FailingProcessBlock(ProcessBlock):
     """
-    Fails every job once before processing them successfully
+    Fails every object once before processing them successfully
     """
 
     def __init__(self, failure_msg="test", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._failure_msg = failure_msg
 
-    def process_job(self, job):
-        self._job = None # Discard the job
+    def process_obj(self, obj):
+        self._obj = None # Discard the job
         raise ProcessingError(self._failure_msg)
 
 
@@ -128,13 +128,13 @@ class TestProcessBlock(TestCase):
         self.assertTrue(hasattr(process_block, "event"))
         # family is a BlockFamily
         self.assertIsInstance(process_block.family, BlockFamily)
-        # jobs is an instance of a multiprocessing.queues.JoinableQueue
-        self.assertIsInstance(process_block.jobs, JoinableQueue)
+        # objects is an instance of a multiprocessing.queues.JoinableQueue
+        self.assertIsInstance(process_block.objs, JoinableQueue)
         self.assertTrue(hasattr(process_block, "logger"))
 
     def test_isabstract(self):
         """
-        A ProcessBlock must define a `process_job` method
+        A ProcessBlock must define a `process_obj` method
         """
         self.assertRaises(TypeError, ProcessBlock)
 
@@ -169,21 +169,21 @@ class TestProcessBlock(TestCase):
         child = DummyProcessBlock(parent=parent)
         ZombieBlock(parent=child)
 
-        child.process_job = Mock(side_effect=lambda job: job + 1)
+        child.process_obj = Mock(side_effect=lambda obj: obj + 1)
 
         child.start()
         self.assertTrue(child.is_alive())
 
-        # Simulate parent producing jobs
+        # Simulate parent producing objects
         for i in range(10):
-            parent.jobs.put(i, timeout=1)
-            self.assertEqual(child.jobs.get(timeout=1), child.process_job(i))
-        parent.jobs.put(None, timeout=1)
+            parent.objs.put(i, timeout=1)
+            self.assertEqual(child.objs.get(timeout=1), child.process_obj(i))
+        parent.objs.put(None, timeout=1)
 
         child.join(timeout=1)
         self.assertFalse(child.is_alive())
 
-    def test_warning_on_job_failure(self):
+    def test_warning_on_obj_failure(self):
         """
         Log ProcessingError as warnings
         """
@@ -194,11 +194,11 @@ class TestProcessBlock(TestCase):
         child_thr = Thread(target=child.run)
         with self.assertLogs(level='WARNING') as context_manager:
             child_thr.start()
-            parent.jobs.put(object())
+            parent.objs.put(object())
 
             # Stop child_thr
             parent.events["stop"].set()
-            parent.jobs.put(None)
+            parent.objs.put(None)
             child_thr.join(timeout=1)
 
         self.assertFalse(child_thr.is_alive())
@@ -208,25 +208,25 @@ class TestProcessBlock(TestCase):
                          "test")
 
 
-    def test_timeout_get_job(self):
+    def test_timeout_get_obj(self):
         """
-        ProcessBlock.get_job() times out when no job is available
+        ProcessBlock.get_obj() times out when no object is available
         """
         block = DummyProcessBlock(parent=DummyProcessBlock())
         block._poll_interval = 0
-        self.assertRaises((IndexError, Empty,), block.get_job)
+        self.assertRaises((IndexError, Empty,), block.get_obj)
 
-    def test_timeout_publish_job(self):
+    def test_timeout_publish_obj(self):
         """
-        ProcessBlock.publish_job() times out when no job is available
+        ProcessBlock.publish_obj() times out when no obj is available
         """
         block = DummyProcessBlock(queue_size=1)
-        # Just to make publish_job to store jobs in the job queue
+        # Just to make publish_obj to store objects in the object queue
         _ = DummyProcessBlock(parent=block)
         # To speed up the test
         block._poll_interval = 0
-        block.publish_job(0)
-        self.assertRaises(Full, block.publish_job, 0)
+        block.publish_obj(0)
+        self.assertRaises(Full, block.publish_obj, 0)
 
     def test_process_no_events(self):
         """
@@ -289,7 +289,7 @@ class TestProcessBlock(TestCase):
 
     def test_stop_handler(self):
         """
-        stop_handler() sends one 'end_job' per child block
+        stop_handler() sends one 'end object' per child block
         """
         parent = DummyProcessBlock()
         children = [ZombieBlock(parent=parent),
@@ -300,28 +300,28 @@ class TestProcessBlock(TestCase):
         parent.stop_handler()
 
         for _ in children:
-            self.assertIsNone(parent.jobs.get(timeout=1))
+            self.assertIsNone(parent.objs.get(timeout=1))
 
     def test_cancel_handler(self):
         """
-        cancel_handler() requeues jobs in _canceled_jobs
+        cancel_handler() requeues objects in _canceled_objs
         """
         block = DummyProcessBlock()
-        for job in range(10):
-            block.jobs.put(job)
+        for obj in range(10):
+            block.objs.put(obj)
 
         # Cancel the block
         block.events["cancel"].set()
         block.cancel_handler()
 
         # Order is not guaranteed
-        self.assertCountEqual(block._canceled_jobs, range(10))
+        self.assertCountEqual(block._canceled_objs, range(10))
 
     def test_cancel_stopped_block(self):
         """
         cancel_handler() clears the cancel and the stop event
 
-        There also is an 'end job' tailed to _canceled_jobs
+        There also is an 'end object' tailed to _canceled_objs
         """
         block = DummyProcessBlock()
         block.events["stop"].set()
@@ -332,7 +332,7 @@ class TestProcessBlock(TestCase):
 
         self.assertFalse(block.events["cancel"].is_set())
         self.assertFalse(block.events["stop"].is_set())
-        self.assertIsNone(block._canceled_jobs[-1])
+        self.assertIsNone(block._canceled_objs[-1])
 
     def test_cancel_triggers_requeue(self):
         """
@@ -356,48 +356,48 @@ class TestProcessBlock(TestCase):
 
     def test_requeue_handler(self):
         """
-        requeue_handler() requeues jobs in parent's job queue
+        requeue_handler() requeues objects in parent's object queue
         """
         parent = DummyProcessBlock()
         child = DummyProcessBlock(parent=parent)
 
-        for job in range(9):
-            child.jobs.put(job)
-        # Do not forget the job in ProcessBlock._job
-        child._job = 9
+        for obj in range(9):
+            child.objs.put(obj)
+        # Do not forget the object in ProcessBlock._obj
+        child._obj = 9
 
         requeue_thr = Thread(target=child.requeue_handler)
         child.events["requeue"].set()
         requeue_thr.start()
 
         # Consume objects in parent's queue for requeue_handler() to return
-        jobs = []
+        objs = []
         for _ in range(10):
-            jobs.append(parent.jobs.get(timeout=1))
-            parent.jobs.task_done()
+            objs.append(parent.objs.get(timeout=1))
+            parent.objs.task_done()
 
         # Order is not guaranteed to be preserved
-        self.assertCountEqual(jobs, range(10))
+        self.assertCountEqual(objs, range(10))
 
         # Join requeue_thr
         requeue_thr.join(timeout=1)
         self.assertFalse(requeue_thr.is_alive())
 
-    def test_requeue_end_job(self):
+    def test_requeue_end_obj(self):
         """
-        'end_job' aka None do not get requeued
+        'end object' aka None do not get requeued
         """
         parent = DummyProcessBlock()
         child = DummyProcessBlock(parent=parent)
 
-        child.jobs.put(None)
+        child.objs.put(None)
 
         # Requeue
         child.events["requeue"].set()
         child.requeue_handler()
 
-        # Ensure the child's job queue is actually emptied
-        self.assertEqual(parent.jobs.qsize(), 0)
+        # Ensure the child's object queue is actually emptied
+        self.assertEqual(parent.objs.qsize(), 0)
 
     def test_requeue_stopped_block(self):
         """
