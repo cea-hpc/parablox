@@ -238,7 +238,7 @@ class ProcessBlock(Process, ABC):
 
         return event_processed
 
-    def get_obj(self):
+    def get_obj(self, timeout=None):
         """
         Get an object from the parent block
         """
@@ -246,22 +246,35 @@ class ProcessBlock(Process, ABC):
         try:
             return self._canceled_objs.popleft()
         except IndexError:
-            obj = self.family.parent.objs.get(timeout=self._poll_interval)
+            obj = self.family.parent.objs.get(timeout=timeout)
             self.family.parent.objs.task_done()
             return obj
 
-    def publish_obj(self, obj):
+    def try_publish_obj(self, obj, poll_interval=None):
         """
-        Publish `obj` to child blocks
+        Publish `obj` to child blocks (unless `obj` is None)
+
+        Returns: True if `obj` was published
+                 False if an event occured before `obj` was published
         """
         if obj is None:
-            # The block is batching objs or filtering them
-            self.logger.debug("no obj to pass on")
-            return
+            return True
+
+        if not self.family.children:
+            self.logger.debug("no one to pass '%s' onto", obj)
+            return True
 
         self.logger.debug("publish '%s'", obj)
-        if self.family.children:
-            self.objs.put(obj, timeout=self._poll_interval)
+        while not self.event.is_set():
+            try:
+                self.objs.put(obj, timeout=poll_interval)
+            except Full:
+                continue
+            return True
+
+        # An event occured
+        self.logger.debug("publication was interrupted by an event")
+        return False
 
     def cleanup(self):
         """
@@ -295,7 +308,7 @@ class ProcessBlock(Process, ABC):
                 # Find an object to process
                 if self._obj is None:
                     try:
-                        self._obj = self.get_obj()
+                        self._obj = self.get_obj(timeout=self._poll_interval)
                     except Empty:
                         continue
 
@@ -319,14 +332,10 @@ class ProcessBlock(Process, ABC):
                     continue
 
                 # Publish the processed object, check for events periodically
-                while not self.event.is_set():
-                    try:
-                        self.publish_obj(obj)
-                    except Full:
-                        continue
-                    # Object was published, or did not to be
+                if self.try_publish_obj(obj,
+                                        poll_interval=self._poll_interval):
+                    # Object was published, or did not need to be
                     self._obj = None
-                    break
 
             # Process the stop event (which is ignored in the loop underneath)
             self.process_events()

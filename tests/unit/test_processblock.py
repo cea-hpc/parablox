@@ -1,6 +1,7 @@
 # author: Quentin Bouget <quentin.bouget@cea.fr>
 #
 # pylint: disable=protected-access
+# pylint: disable=too-many-public-methods
 
 """
 Test the ProcessBlock abstract class
@@ -213,20 +214,74 @@ class TestProcessBlock(TestCase):
         ProcessBlock.get_obj() times out when no object is available
         """
         block = DummyProcessBlock(parent=DummyProcessBlock())
-        block._poll_interval = 0
-        self.assertRaises((IndexError, Empty,), block.get_obj)
+        self.assertRaises((IndexError, Empty,), block.get_obj, timeout=0)
 
-    def test_timeout_publish_obj(self):
+    def test_publish_obj(self):
         """
-        ProcessBlock.publish_obj() times out when no obj is available
+        try_publish_obj() puts a object in the block's queue
+        """
+        block = DummyProcessBlock()
+        # Objects are only stored if there are children
+        ZombieBlock(parent=block)
+
+        self.assertTrue(block.try_publish_obj(0))
+        self.assertEqual(block.objs.get(timeout=1), 0)
+
+    def test_publish_none(self):
+        """
+        try_publish_obj() does nothing if obj is None
+        """
+        block = DummyProcessBlock()
+        ZombieBlock(parent=block)
+
+        self.assertTrue(block.try_publish_obj(None))
+        self.assertTrue(block.objs.empty())
+
+    def test_publish_no_children(self):
+        """
+        try_publish_obj() does nothing when there are no children
+        """
+        block = DummyProcessBlock()
+        self.assertTrue(block.try_publish_obj(0))
+        self.assertTrue(block.objs.empty())
+
+    def test_publish_interrupted(self):
+        """
+        try_publish_obj() will fail if an event occurs
+        """
+        block = DummyProcessBlock()
+        ZombieBlock(parent=block)
+
+        block.event.set()
+        self.assertFalse(block.try_publish_obj(0))
+        self.assertTrue(block.objs.empty())
+
+    def test_publish_blocking(self):
+        """
+        try_publish_obj() will block until there is space in the queue
         """
         block = DummyProcessBlock(queue_size=1)
-        # Just to make publish_obj to store objects in the object queue
-        _ = DummyProcessBlock(parent=block)
-        # To speed up the test
-        block._poll_interval = 0
-        block.publish_obj(0)
-        self.assertRaises(Full, block.publish_obj, 0)
+        ZombieBlock(parent=block)
+
+        # Fill the queue
+        block.objs.put = Mock(side_effect=Full())
+
+        # To test a blocking call, run it in a thread
+        publish_thr = Thread(target=block.try_publish_obj, args=(0,))
+        publish_thr.start()
+
+        while not block.objs.put.called:
+            pass
+
+        # The call is indeed blocking
+        self.assertTrue(publish_thr.is_alive())
+
+        # Unblock it
+        block.event.set()
+
+        # Check it stops
+        publish_thr.join(timeout=1)
+        self.assertFalse(publish_thr.is_alive())
 
     def test_process_no_events(self):
         """
@@ -371,13 +426,8 @@ class TestProcessBlock(TestCase):
         requeue_thr.start()
 
         # Consume objects in parent's queue for requeue_handler() to return
-        objs = []
-        for _ in range(10):
-            objs.append(parent.objs.get(timeout=1))
-            parent.objs.task_done()
-
-        # Order is not guaranteed to be preserved
-        self.assertCountEqual(objs, range(10))
+        self.assertCountEqual(range(10), iter(child.get_obj(timeout=1)
+                                              for _ in range(10)))
 
         # Join requeue_thr
         requeue_thr.join(timeout=1)

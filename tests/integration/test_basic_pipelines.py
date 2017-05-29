@@ -1,6 +1,7 @@
 # author: Quentin Bouget <quentin.bouget@cea.fr>
 #
 # pylint: disable=protected-access
+# pylint: disable=too-many-public-methods
 
 """
 Test a basic parablox pipeline
@@ -32,7 +33,7 @@ class ObjFactory(DummyProcessBlock):
         """
         return iter(copy(self.iterable))
 
-    def get_obj(self):
+    def get_obj(self, timeout=None):
         """
         Get an object from the factory
 
@@ -62,14 +63,14 @@ class WaitingBlock(DummyProcessBlock):
         self.consume = Event()
         self.waiting = Event()
 
-    def get_obj(self):
+    def get_obj(self, timeout=None):
         """
         Wait for the consume event and return an object
         """
         self.waiting.set()
         self.consume.wait()
         self.consume.clear()
-        return super().get_obj()
+        return super().get_obj(timeout=timeout)
 
 
 class TestPipelines(TestCase):
@@ -156,15 +157,15 @@ class TestPipelines(TestCase):
         # Let waiting_block process the cancel event
         waiting_block.consume.set()
 
-        # block should receive a requeue event and requeue its objs
+        # block should receive a requeue event and requeue its objects
         block.objs.join()
 
-        for _ in range(11): # 10 + "end obj"
+        for _ in range(11): # 10 + "end object"
             self.assertTrue(waiting_block.waiting.wait(timeout=1))
             waiting_block.waiting.clear()
             waiting_block.consume.set()
 
-        # objects get reprocessed
+        # Objects get reprocessed
         self.assertCountEqual(range(10), iter(block.objs.get(timeout=1)
                                               for _ in range(10)))
 
