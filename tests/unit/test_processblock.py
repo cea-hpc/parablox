@@ -409,6 +409,16 @@ class TestProcessBlock(TestCase):
         cancel_thr.join(timeout=1)
         self.assertFalse(cancel_thr.is_alive())
 
+    def test_cancel(self):
+        """
+        cancel() sets the cancel event and the master event
+        """
+        block = DummyProcessBlock()
+        block.cancel()
+
+        self.assertTrue(block.event.is_set())
+        self.assertTrue(block.events["cancel"].is_set())
+
     def test_requeue_handler(self):
         """
         _requeue_handler() requeues objects in parent's object queue

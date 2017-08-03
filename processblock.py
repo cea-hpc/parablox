@@ -144,6 +144,13 @@ class ProcessBlock(Process, ABC):
         for _ in self.family.alive_children():
             self.objs.put(None)
 
+    def cancel(self):
+        """
+        Set the cancel event and the master event
+        """
+        self.events["cancel"].set()
+        self.event.set()
+
     def _cancel_handler(self):
         """
         Cancel children's objects and re-queue them in self._canceled_objs

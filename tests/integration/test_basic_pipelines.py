@@ -1,6 +1,5 @@
 # author: Quentin Bouget <quentin.bouget@cea.fr>
 #
-# pylint: disable=protected-access
 # pylint: disable=too-many-public-methods
 
 """
@@ -151,8 +150,7 @@ class TestPipelines(TestCase):
         self.assertTrue(waiting_block.waiting.wait(timeout=1))
         waiting_block.waiting.clear()
         # Cancel waiting_block
-        waiting_block.events["cancel"].set()
-        waiting_block.event.set()
+        waiting_block.cancel()
 
         # Let waiting_block process the cancel event
         waiting_block.consume.set()
