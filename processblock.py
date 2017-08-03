@@ -100,9 +100,9 @@ class ProcessBlock(Process, ABC):
 
         # Corresponding event handlers
         self.event_handlers = {
-            "cancel": self.cancel_handler,
-            "requeue": self.requeue_handler,
-            "stop": self.stop_handler,
+            "cancel": self._cancel_handler,
+            "requeue": self._requeue_handler,
+            "stop": self._stop_handler,
             }
 
         # Master event, to be set after any other event
@@ -136,7 +136,7 @@ class ProcessBlock(Process, ABC):
         """
         raise NotImplementedError()
 
-    def stop_handler(self):
+    def _stop_handler(self):
         """
         Send the "end object" (None) to every child
         """
@@ -144,7 +144,7 @@ class ProcessBlock(Process, ABC):
         for _ in self.family.alive_children():
             self.objs.put(None)
 
-    def cancel_handler(self):
+    def _cancel_handler(self):
         """
         Cancel children's objects and re-queue them in self._canceled_objs
         """
@@ -173,7 +173,7 @@ class ProcessBlock(Process, ABC):
         # Clear the event
         self.events["cancel"].clear()
 
-    def requeue_handler(self):
+    def _requeue_handler(self):
         """
         Requeue every object managed by the block or one of its children
         """
@@ -213,7 +213,7 @@ class ProcessBlock(Process, ABC):
         # Clear the event
         self.events["requeue"].clear()
 
-    def process_events(self, ignore=()):
+    def _process_events(self, ignore=()):
         """
         Process events
 
@@ -276,7 +276,7 @@ class ProcessBlock(Process, ABC):
         self.logger.debug("publication was interrupted by an event")
         return False
 
-    def cleanup(self):
+    def _cleanup(self):
         """
         Tell parent and siblings we stop and exit cleanly
         """
@@ -302,7 +302,7 @@ class ProcessBlock(Process, ABC):
             # Processing loop
             while not self.events["stop"].is_set():
                 # Process exterior events
-                if self.process_events():
+                if self._process_events():
                     continue
 
                 # Find an object to process
@@ -338,15 +338,15 @@ class ProcessBlock(Process, ABC):
                     self._obj = None
 
             # Process the stop event (which is ignored in the loop underneath)
-            self.process_events()
+            self._process_events()
 
             # Wait for the entire family to stop, unless `stop` gets cleared
             while (self.events["stop"].is_set() and
                    not self.family.is_stopped()):
                 self.event.wait()
-                self.process_events(ignore=("stop",))
+                self._process_events(ignore=("stop",))
 
         # Process is exiting, there is no turning back
         # Every sibling/child process will shortly do so too (or already have)
-        self.cleanup()
+        self._cleanup()
         self.logger.debug("terminating")

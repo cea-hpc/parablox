@@ -285,20 +285,20 @@ class TestProcessBlock(TestCase):
 
     def test_process_no_events(self):
         """
-        process_events() returns False when there is no event
+        _process_events() returns False when there is no event
         """
         block = DummyProcessBlock()
         # ProcessBlock.event is not even set
-        self.assertFalse(block.process_events())
+        self.assertFalse(block._process_events())
         block.event.set()
         # No event was actually processed -> return False
-        self.assertFalse(block.process_events())
+        self.assertFalse(block._process_events())
         # ProcessBlock.event is cleared
         self.assertFalse(block.event.is_set())
 
     def test_process_one_event(self):
         """
-        If an event is set process_events() runs its handler
+        If an event is set _process_events() runs its handler
         """
         block = DummyProcessBlock()
         block.events = OrderedDict([
@@ -310,12 +310,12 @@ class TestProcessBlock(TestCase):
         block.events["dummy_event"].set()
         block.event.set()
         # An event was processed -> return True
-        self.assertTrue(block.process_events())
+        self.assertTrue(block._process_events())
         block.event_handlers["dummy_event"].method.assert_called_once()
 
     def test_break_on_event(self):
         """
-        process_events() breaks on event_handlers that return True
+        _process_events() breaks on event_handlers that return True
         """
         block = DummyProcessBlock()
         block.events = OrderedDict([
@@ -334,7 +334,7 @@ class TestProcessBlock(TestCase):
         block.event.set()
 
         # An event was processed -> return True
-        self.assertTrue(block.process_events())
+        self.assertTrue(block._process_events())
 
         # The first and second events were processed...
         block.event_handlers["first"].method.assert_called_once()
@@ -344,7 +344,7 @@ class TestProcessBlock(TestCase):
 
     def test_stop_handler(self):
         """
-        stop_handler() sends one 'end object' per child block
+        _stop_handler() sends one 'end object' per child block
         """
         parent = DummyProcessBlock()
         children = [ZombieBlock(parent=parent),
@@ -352,14 +352,14 @@ class TestProcessBlock(TestCase):
 
         # Stop the block
         parent.events["stop"].set()
-        parent.stop_handler()
+        parent._stop_handler()
 
         for _ in children:
             self.assertIsNone(parent.objs.get(timeout=1))
 
     def test_cancel_handler(self):
         """
-        cancel_handler() requeues objects in _canceled_objs
+        _cancel_handler() requeues objects in _canceled_objs
         """
         block = DummyProcessBlock()
         for obj in range(10):
@@ -367,14 +367,14 @@ class TestProcessBlock(TestCase):
 
         # Cancel the block
         block.events["cancel"].set()
-        block.cancel_handler()
+        block._cancel_handler()
 
         # Order is not guaranteed
         self.assertCountEqual(block._canceled_objs, range(10))
 
     def test_cancel_stopped_block(self):
         """
-        cancel_handler() clears the cancel and the stop event
+        _cancel_handler() clears the cancel and the stop event
 
         There also is an 'end object' tailed to _canceled_objs
         """
@@ -383,7 +383,7 @@ class TestProcessBlock(TestCase):
 
         # Cancel the block
         block.events["cancel"].set()
-        block.cancel_handler()
+        block._cancel_handler()
 
         self.assertFalse(block.events["cancel"].is_set())
         self.assertFalse(block.events["stop"].is_set())
@@ -391,14 +391,14 @@ class TestProcessBlock(TestCase):
 
     def test_cancel_triggers_requeue(self):
         """
-        cancel_handler() sets the requeue event on child blocks
+        _cancel_handler() sets the requeue event on child blocks
         """
         parent = DummyProcessBlock()
         children = [ZombieBlock(parent=parent),
                     ZombieBlock(parent=parent),]
 
         parent.events["cancel"].set()
-        cancel_thr = Thread(target=parent.cancel_handler)
+        cancel_thr = Thread(target=parent._cancel_handler)
         cancel_thr.start()
 
         for child in children:
@@ -411,7 +411,7 @@ class TestProcessBlock(TestCase):
 
     def test_requeue_handler(self):
         """
-        requeue_handler() requeues objects in parent's object queue
+        _requeue_handler() requeues objects in parent's object queue
         """
         parent = DummyProcessBlock()
         child = DummyProcessBlock(parent=parent)
@@ -421,11 +421,11 @@ class TestProcessBlock(TestCase):
         # Do not forget the object in ProcessBlock._obj
         child._obj = 9
 
-        requeue_thr = Thread(target=child.requeue_handler)
+        requeue_thr = Thread(target=child._requeue_handler)
         child.events["requeue"].set()
         requeue_thr.start()
 
-        # Consume objects in parent's queue for requeue_handler() to return
+        # Consume objects in parent's queue for _requeue_handler() to return
         self.assertCountEqual(range(10), iter(child.get_obj(timeout=1)
                                               for _ in range(10)))
 
@@ -444,27 +444,27 @@ class TestProcessBlock(TestCase):
 
         # Requeue
         child.events["requeue"].set()
-        child.requeue_handler()
+        child._requeue_handler()
 
         # Ensure the child's object queue is actually emptied
         self.assertEqual(parent.objs.qsize(), 0)
 
     def test_requeue_stopped_block(self):
         """
-        requeue_handler() clears both requeue and stop events
+        _requeue_handler() clears both requeue and stop events
         """
         child = DummyProcessBlock(parent=ZombieBlock())
 
         # Requeue
         child.events["requeue"].set()
-        child.requeue_handler()
+        child._requeue_handler()
 
         self.assertFalse(child.events["requeue"].is_set())
         self.assertFalse(child.events["stop"].is_set())
 
     def test_requeue_triggers_requeue(self):
         """
-        requeue_handler() sets the requeue event on child blocks
+        _requeue_handler() sets the requeue event on child blocks
                              --> child
         (zombie -->) parent -|
                              --> child
@@ -475,7 +475,7 @@ class TestProcessBlock(TestCase):
                     ZombieBlock(parent=parent),]
 
         parent.events["requeue"].set()
-        requeue_thr = Thread(target=parent.requeue_handler)
+        requeue_thr = Thread(target=parent._requeue_handler)
         requeue_thr.start()
 
         for child in children:
