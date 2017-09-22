@@ -8,7 +8,6 @@ Test the ProcessBlock abstract class
 """
 
 from collections import OrderedDict
-from itertools import chain
 from multiprocessing import Event
 from multiprocessing.queues import JoinableQueue, Empty, Full
 from multiprocessing.synchronize import Event as EventClass
@@ -16,97 +15,9 @@ from threading import Thread
 from unittest import TestCase
 from unittest.mock import Mock
 
-from parablox import ProcessingError, ProcessBlock
+from parablox import ProcessBlock
 from parablox.processblock import BlockFamily
-
-
-class DummyProcessBlock(ProcessBlock):
-    """
-    Dummy ProcessBlock subclass, just passes on its objects
-    """
-
-    def process_obj(self, obj):
-        return obj
-
-class ZombieBlock(ProcessBlock):
-    """
-    Dummy ProcessBlock subclass
-
-    Zombie are used to force blocks to store objects in their queue
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.events["stop"].set()
-        # Use an event to interact from another process's context
-        self.die = Event()
-
-    def process_obj(self, obj):
-        raise RuntimeError("This method sould not be called")
-
-    def is_alive(self):
-        return not self.die.is_set()
-
-
-class FailingProcessBlock(ProcessBlock):
-    """
-    Fails every object once before processing them successfully
-    """
-
-    def __init__(self, failure_msg="test", *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._failure_msg = failure_msg
-
-    def process_obj(self, obj):
-        self._obj = None # Discard the job
-        raise ProcessingError(self._failure_msg)
-
-
-class TestBlockFamily(TestCase):
-    """
-    Test BlockFamily's methods
-    """
-
-    def test_link_noparent(self):
-        """
-        Link an orphaned block
-        """
-        self.assertEqual(DummyProcessBlock().family, BlockFamily(None, [], []))
-
-    def test_link_children(self):
-        """
-        Link children to a parent
-
-        The BlockFamily class is too tightly tied to ProcessBlock to test
-        the link method explicitely, this test relies on how a ProcessBlock
-        uses the BlockFamily's link method
-        """
-        parent = DummyProcessBlock()
-        children = [DummyProcessBlock(parent=parent),
-                    DummyProcessBlock(parent=parent),
-                    DummyProcessBlock(parent=parent),]
-
-        # parent's family include the children
-        self.assertEqual(parent.family, BlockFamily(None, [], children))
-
-        # children's parent and siblings are correctly set
-        for child in children:
-            siblings = [block for block in children if block is not child]
-            self.assertEqual(child.family, BlockFamily(parent, siblings, []))
-
-    def test_iterate(self):
-        """
-        Iterator over parent, siblings and children
-        """
-        parent = DummyProcessBlock()
-        children = [DummyProcessBlock(parent=parent),
-                    DummyProcessBlock(parent=parent),
-                    DummyProcessBlock(parent=parent),]
-        grandchildren = [DummyProcessBlock(parent=children[0]),
-                         DummyProcessBlock(parent=children[0]),
-                         DummyProcessBlock(parent=children[0]),]
-        self.assertCountEqual(children[0].family,
-                              chain((parent,), children[1:], grandchildren))
+from parablox.tests import DummyProcessBlock, FailingProcessBlock, ZombieBlock
 
 
 class TestProcessBlock(TestCase):
