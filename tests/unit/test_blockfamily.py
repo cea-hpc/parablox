@@ -9,7 +9,7 @@ from itertools import chain
 from unittest import TestCase
 
 from parablox.processblock import BlockFamily
-from parablox.tests import DummyProcessBlock
+from tests import DummyProcessBlock
 
 
 class TestBlockFamily(TestCase):

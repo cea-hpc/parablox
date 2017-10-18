@@ -11,7 +11,7 @@ from itertools import cycle
 from multiprocessing import Event
 from unittest import TestCase
 
-from parablox.tests import DummyProcessBlock, ZombieBlock
+from tests import DummyProcessBlock, ZombieBlock
 
 
 class ObjFactory(DummyProcessBlock):

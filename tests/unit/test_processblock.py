@@ -17,7 +17,7 @@ from unittest.mock import Mock
 
 from parablox import ProcessBlock
 from parablox.processblock import BlockFamily
-from parablox.tests import DummyProcessBlock, FailingProcessBlock, ZombieBlock
+from tests import DummyProcessBlock, FailingProcessBlock, ZombieBlock
 
 
 class TestProcessBlock(TestCase):
