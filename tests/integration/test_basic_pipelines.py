@@ -6,7 +6,6 @@
 Test a basic parablox pipeline
 """
 
-from copy import copy
 from itertools import cycle
 from multiprocessing import Event
 from unittest import TestCase
@@ -21,15 +20,14 @@ class ObjFactory(DummyProcessBlock):
 
     def __init__(self, iterable, *args, **kwargs):
         super().__init__(parent=None, *args, **kwargs)
-        self.iterable = iterable
-        self.__len = len(list(copy(iterable)))
-        self.__generator = None
+        self.elements = list(iterable)
+        self._gen = iter(self)
 
     def __iter__(self):
         """
         Return a generator of objects
         """
-        return iter(copy(self.iterable))
+        yield from self.elements
 
     def get_obj(self, timeout=None):
         """
@@ -37,16 +35,13 @@ class ObjFactory(DummyProcessBlock):
 
         Set the stop event once every object is scheduled
         """
-        if self.__generator is None:
-            self.__generator = iter(self)
         try:
-            return next(self.__generator)
+            return next(self._gen)
         except StopIteration:
-            self.__generator = None
             return None
 
     def __len__(self):
-        return self.__len
+        return len(self.elements)
 
 
 class WaitingBlock(DummyProcessBlock):
