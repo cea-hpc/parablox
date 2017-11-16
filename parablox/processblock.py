@@ -19,7 +19,6 @@ Exception to be raised on error in ProcessBlock.proc
 from abc import ABC, abstractmethod
 from collections import deque, namedtuple, OrderedDict
 from copy import copy
-from itertools import chain
 from logging import getLogger
 from multiprocessing import Event, Process, JoinableQueue
 from queue import Empty, Full
@@ -64,9 +63,10 @@ class BlockFamily(namedtuple('BlockFamily', "parent, siblings, children")):
         If parent is None, the iterator returned will not yield it
         """
         if self.parent is not None:
-            return chain((self.parent,), self.siblings, self.children)
+            yield self.parent
 
-        return chain(self.siblings, self.children)
+        yield from self.siblings
+        yield from self.children
 
     def alive_children(self):
         """
