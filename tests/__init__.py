@@ -35,7 +35,7 @@ class FailingProcessBlock(ProcessBlock):
     Fails every object once before processing them successfully
     """
 
-    def __init__(self, failure_msg="test", *args, **kwargs):
+    def __init__(self, *args, failure_msg="test", **kwargs):
         super().__init__(*args, **kwargs)
         self._failure_msg = failure_msg
 
